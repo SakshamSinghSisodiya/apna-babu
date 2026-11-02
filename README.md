@@ -4,7 +4,7 @@
 
 Apna Babu is the government clerk who works for you: a voice-first assistant that fills any paper form, or answers any official letter, for people who can't comfortably read or write English.
 
-**Live demo:** _coming soon_
+**Live demo:** https://apna-babu.vercel.app
 
 ## The problem
 
