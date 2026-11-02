@@ -88,3 +88,13 @@ export function quickIntent(text: string): "yes" | "no" | "skip" | null {
   if (hasYes && !hasNo) return "yes";
   return null;
 }
+
+const START = ["start", "begin", "shuru", "suru", "chalo", "chala", "chaliye", "form", "शुरू", "शुरु", "सुरू", "सुरु", "स्टार्ट", "चलो", "चला", "चलिए", "फॉर्म", "फ़ॉर्म"];
+
+// After the explanation: a short "yes", "no questions" or "start" means begin the form. Anything else is a question.
+export function wantsToStart(text: string): boolean {
+  if (/[?？]/.test(text)) return false;
+  const words = clean(text).split(" ");
+  if (words.length > 3) return false;
+  return words.some((w) => START.includes(w)) || quickIntent(text) !== null;
+}

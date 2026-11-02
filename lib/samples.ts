@@ -93,3 +93,10 @@ export const SAMPLES: { id: string; emoji: string; name: string; blurb: string; 
     },
   },
 ];
+
+// Samples have no scanned text, so explaining them and answering questions works from their schema.
+export function schemaAsText(s: FormSchema): string {
+  const sections = [...new Set(s.fields.map((f) => f.section))];
+  const blanks = sections.map((name) => `${name}:\n` + s.fields.filter((f) => f.section === name).map((f) => `${f.label_en}${f.options ? ` (${f.options.join(" / ")})` : ""}: ______`).join("\n"));
+  return [s.title, s.summary_en, ...blanks, s.required_attachments.length ? `Attach: ${s.required_attachments.join(", ")}.` : ""].filter(Boolean).join("\n\n");
+}

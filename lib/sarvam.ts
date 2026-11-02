@@ -57,6 +57,8 @@ export async function sarvamJSON<T = any>(path: string, opts: CallOpts = {}): Pr
 
 // ---- Chat -----------------------------------------------------------------
 const CHAT_MODELS = ["sarvam-105b-conversations", "gemma4"];
+// Gemma writes the plainest Hindi and Marathi; the other model mixes English words into them.
+export const WRITING_MODELS = ["gemma4", "sarvam-105b-conversations"];
 
 // A reply cut off by max_tokens: keep everything up to the last complete object and close what's still open.
 function repairTruncated(text: string): string | null {
@@ -96,9 +98,9 @@ export function extractJSON(text: string): any {
   throw new Error("no json");
 }
 
-export async function chat(messages: { role: string; content: string }[], maxTokens = 1500, timeoutMs = 20000): Promise<string> {
+export async function chat(messages: { role: string; content: string }[], maxTokens = 1500, timeoutMs = 20000, models = CHAT_MODELS): Promise<string> {
   let lastErr: unknown;
-  for (const model of CHAT_MODELS) {
+  for (const model of models) {
     try {
       const data = await sarvamJSON("/v2/chat/completions", {
         json: { model, messages, temperature: 0.2, max_tokens: maxTokens, response_format: { type: "json_object" } },
@@ -115,7 +117,7 @@ export async function chat(messages: { role: string; content: string }[], maxTok
   throw lastErr;
 }
 
-export async function chatJSON<T = any>(system: string, user: string, maxTokens = 1500, timeoutMs?: number): Promise<T> {
+export async function chatJSON<T = any>(system: string, user: string, maxTokens = 1500, timeoutMs?: number, models?: string[]): Promise<T> {
   const messages = [
     { role: "system", content: system },
     { role: "user", content: user },
@@ -124,7 +126,7 @@ export async function chatJSON<T = any>(system: string, user: string, maxTokens 
   let text = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      text = await chat(messages, maxTokens, timeoutMs);
+      text = await chat(messages, maxTokens, timeoutMs, models);
     } catch (e) {
       throw e; // chat() already tried every model; retrying would outlast the route's time limit
     }
@@ -138,10 +140,10 @@ export async function chatJSON<T = any>(system: string, user: string, maxTokens 
 }
 
 // ---- Translate / Transliterate -------------------------------------------
-export async function translateText(input: string, target: string, mode: string, source = "en-IN", outputScript?: "roman"): Promise<string> {
+export async function translateText(input: string, target: string, mode: string, source = "en-IN", outputScript?: "roman", model = "mayura:v1"): Promise<string> {
   if (!input.trim() || target === source) return input;
   const data = await sarvamJSON("/translate", {
-    json: { input: input.slice(0, 990), source_language_code: source, target_language_code: target, model: "mayura:v1", mode, speaker_gender: "Male", ...(outputScript ? { output_script: outputScript } : {}) },
+    json: { input: input.slice(0, 990), source_language_code: source, target_language_code: target, model, mode, speaker_gender: "Male", ...(outputScript ? { output_script: outputScript } : {}) },
   });
   return data.translated_text ?? input;
 }

@@ -1,6 +1,6 @@
 // Browser-only audio helpers: record -> 16 kHz mono WAV, and a single reusable player.
 
-const SILENCE_MS = 3000; // a pause this long after speech ends the answer
+const SILENCE_MS = 2000; // a pause this long after speech ends the answer
 const NO_SPEECH_MS = 25000; // nobody spoke: turn the mic off rather than listen forever
 const MAX_SPEECH_MS = 28000; // Saaras takes about 30 s per clip
 const MIN_SPEECH_MS = 150; // shorter sounds are clicks and bumps, not words

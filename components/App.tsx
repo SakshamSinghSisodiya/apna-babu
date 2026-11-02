@@ -4,8 +4,8 @@ import FormSheet from "./FormSheet";
 import { Player, Recorder, downscaleImage } from "@/lib/audio";
 import { LANG_LIST, LANGUAGES, type LangId } from "@/lib/languages";
 import { CONFIRM_TMPL, GREETING, MISC, t } from "@/lib/i18n";
-import { SAMPLES } from "@/lib/samples";
-import { quickIntent, speakableValue } from "@/lib/validate";
+import { SAMPLES, schemaAsText } from "@/lib/samples";
+import { quickIntent, speakableValue, wantsToStart } from "@/lib/validate";
 import type { AnswerResult, FieldLoc, FieldValue, FormSchema, Localized } from "@/lib/types";
 
 type Phase = "upload" | "reading" | "lang" | "preparing" | "chat" | "done";
@@ -28,6 +28,11 @@ async function api<T = any>(url: string, body?: unknown, form?: FormData): Promi
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// The bullets are for reading: spoken, they run on as one explanation, with dates said as dates.
+function joinPoints(list: string[]): Localized {
+  return { text: list.map((p, i) => (i && list.length > 2 ? "• " : "") + p).join("\n"), speak: list.join(" ").replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, "$1 $2 $3") };
+}
+
 function nextUnresolved(schema: FormSchema, values: Record<string, FieldValue>): number {
   return schema.fields.findIndex((f) => !values[f.id]);
 }
@@ -39,7 +44,7 @@ export default function App() {
   const [loc, setLoc] = useState<FieldLoc[]>([]);
   const [values, setValues] = useState<Record<string, FieldValue>>({});
   const [idx, setIdx] = useState(0);
-  const [stage, setStage] = useState<"asking" | "confirming">("asking");
+  const [stage, setStage] = useState<"discussing" | "asking" | "confirming">("asking");
   const [pending, setPending] = useState<FieldValue | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [busy, setBusy] = useState<null | "thinking">(null);
@@ -56,9 +61,10 @@ export default function App() {
   const [pasteText, setPasteText] = useState("");
   const [sharedNote, setSharedNote] = useState("");
   const [letter, setLetter] = useState("");
+  const [askMode, setAskMode] = useState(false);
 
-  const live = useRef({ schema, lang, loc, values, idx, stage, pending, phase, busy, micDenied });
-  live.current = { schema, lang, loc, values, idx, stage, pending, phase, busy, micDenied };
+  const live = useRef({ schema, lang, loc, values, idx, stage, pending, phase, busy, micDenied, askMode });
+  live.current = { schema, lang, loc, values, idx, stage, pending, phase, busy, micDenied, askMode };
   const player = useRef<Player | null>(null);
   const recorder = useRef<Recorder | null>(null);
   const recordingRef = useRef(false);
@@ -72,6 +78,9 @@ export default function App() {
   const speakSeq = useRef(0);
   const session = useRef(0); // bumped by "start over" so late replies from the old form are ignored
   const lastFile = useRef<File | null>(null);
+  const docText = useRef(""); // what /api/explain and /api/ask read; lives only in this tab
+  const explanation = useRef(new Map<LangId, string[]>());
+  const qaHistory = useRef<{ q: string; a: string }[]>([]);
 
   const getPlayer = () => (player.current ??= new Player());
 
@@ -139,6 +148,9 @@ export default function App() {
   const processMarkdown = async (markdown: string) => {
     setReadStep(2);
     const sch = await api<FormSchema>("/api/schema", { markdown });
+    docText.current = markdown;
+    explanation.current.clear();
+    qaHistory.current = [];
     setSchema(sch);
     setPhase("lang");
     void speak(GREETING.hinglish, "hinglish", true);
@@ -211,6 +223,9 @@ export default function App() {
     getPlayer().unlock();
     const s = SAMPLES.find((x) => x.id === id)!;
     setUploadErr(null);
+    docText.current = schemaAsText(s.schema);
+    explanation.current.clear();
+    qaHistory.current = [];
     setSchema(s.schema);
     setPhase("lang");
     void speak(GREETING.hinglish, "hinglish", true);
@@ -218,15 +233,63 @@ export default function App() {
 
   // ---------- conversation ----------
   const prepare = async (sch: FormSchema, lng: LangId) => {
-    const pre = sch.fields.filter((f) => f.prefilled_value).length;
-    const n = sch.fields.length - pre;
-    const intro =
-      (sch.is_form ? "" : `This is not a form, but I can help you respond to it with a ${sch.title}. `) +
-      `${sch.summary_en} I will ask you ${n} question${n === 1 ? "" : "s"}, one by one. You can speak or type your answers. Let's begin.`;
-    const texts = [intro, ...sch.fields.flatMap((f) => [f.question_en, f.label_en])];
-    const out = await translateMany(texts, lng);
-    const locs: FieldLoc[] = sch.fields.map((_, i) => ({ question: out[1 + i * 2], label: out[2 + i * 2].text }));
-    return { introLoc: out[0], locs };
+    const known = explanation.current.get(lng);
+    const fallback = known ? [] : [sch.summary_en];
+    const [written, out] = await Promise.all([
+      known ?? api<{ points: string[] }>("/api/explain", { markdown: docText.current, lang: lng, is_form: sch.is_form }).then((r) => r.points).catch(() => null),
+      translateMany([...fallback, ...(sch.is_form ? [] : [`I can help you write a ${sch.title}.`]), ...sch.fields.flatMap((f) => [f.question_en, f.label_en])], lng),
+    ]);
+    if (written) explanation.current.set(lng, written);
+    const head = out.length - sch.fields.length * 2;
+    const fields = out.slice(head);
+    const locs: FieldLoc[] = sch.fields.map((_, i) => ({ question: fields[i * 2], label: fields[i * 2 + 1].text }));
+    // Without an explanation the translated summary stands in; the reply offer is the last line either way.
+    const extras = out.slice(0, head).map((x) => x.text);
+    return { explained: joinPoints(written ? [...written, ...extras.slice(fallback.length)] : extras), locs };
+  };
+
+  // Explains the document, then waits: the person may only want to understand it.
+  const explainAndOffer = (sch: FormSchema, lng: LangId, explained: Localized) => {
+    const n = sch.fields.filter((f) => !f.prefilled_value).length;
+    const offer = MISC[lng].offer.replace("{n}", String(n));
+    setStage("discussing");
+    setMsgs((m) => [...m, { id: ++msgId.current, from: "babu", text: explained.text, speak: explained.speak, lang: lng }, { id: ++msgId.current, from: "babu", text: offer, lang: lng }]);
+    void speak(`${explained.speak} ${offer}`, lng);
+  };
+
+  const startFilling = () => {
+    const L = live.current;
+    setAskMode(false);
+    const first = nextUnresolved(L.schema!, L.values);
+    if (first < 0) return void finish(L.values, L.lang, L.loc);
+    ask(first, { lang: L.lang, loc: L.loc });
+  };
+
+  // Answers a question about the document, then picks up exactly where the conversation was.
+  const askDoc = async (question: string) => {
+    const L = live.current;
+    const gen = session.current;
+    const filling = L.phase === "chat" && L.stage !== "discussing";
+    const r = await api<{ intent: string; sentences: string[] }>("/api/ask", {
+      markdown: docText.current,
+      lang: L.lang,
+      question,
+      history: qaHistory.current.slice(-3),
+      current_field: filling ? L.schema!.fields[L.idx].label_en : undefined,
+    });
+    if (gen !== session.current) return;
+    if (r.intent === "start" && L.stage === "discussing" && L.phase === "chat") return startFilling();
+    qaHistory.current.push({ q: question, a: r.sentences.join(" ") });
+    setAskMode(false);
+    const answer = joinPoints(r.sentences);
+    const next: Localized | null = L.phase === "done"
+      ? null
+      : L.stage === "discussing"
+        ? { text: MISC[L.lang].more, speak: MISC[L.lang].more }
+        : L.stage === "confirming" && L.pending
+          ? confirmLine(L.pending)
+          : L.loc[L.idx].question;
+    pushBabu(next ? `${answer.text}\n\n${next.text}` : answer.text, L.lang, next ? `${answer.speak} ${next.speak}` : answer.speak);
   };
 
   const ask = (i: number, c: { lang: LangId; loc: FieldLoc[] }, prefix?: Localized) => {
@@ -248,7 +311,7 @@ export default function App() {
     const gen = session.current;
     setLang(lng);
     setPhase("preparing");
-    const { introLoc, locs } = await prepare(schema, lng);
+    const { explained, locs } = await prepare(schema, lng);
     if (gen !== session.current) return;
     const vals: Record<string, FieldValue> = {};
     schema.fields.forEach((f) => {
@@ -258,14 +321,7 @@ export default function App() {
     setValues(vals);
     setMsgs([]);
     setPhase("chat");
-    const first = nextUnresolved(schema, vals);
-    setMsgs((m) => [...m, { id: ++msgId.current, from: "babu", text: introLoc.text, speak: introLoc.speak, lang: lng }]);
-    if (first < 0) return void finish(vals, lng, locs);
-    setIdx(first);
-    setStage("asking");
-    const q = locs[first].question;
-    setMsgs((m) => [...m, { id: ++msgId.current, from: "babu", text: q.text, speak: q.speak, lang: lng }]);
-    void speak(`${introLoc.speak} ${q.speak}`, lng);
+    explainAndOffer(schema, lng, explained);
   };
 
   const switchLang = async (lng: LangId) => {
@@ -274,11 +330,12 @@ export default function App() {
     cancelRec();
     setLidSuggest(null);
     setBusy("thinking");
-    const { locs } = await prepare(L.schema, lng);
+    const { explained, locs } = await prepare(L.schema, lng);
     setLang(lng);
     setLoc(locs);
     setBusy(null);
-    ask(L.idx, { lang: lng, loc: locs });
+    if (L.stage === "discussing") explainAndOffer(L.schema, lng, explained);
+    else ask(L.idx, { lang: lng, loc: locs });
   };
 
   const finish = async (vals: Record<string, FieldValue>, lng: LangId, _locs: FieldLoc[]) => {
@@ -304,7 +361,7 @@ export default function App() {
     const [loc1] = await translateMany([en], lng);
     if (gen !== session.current) return;
     setBusy(null);
-    pushBabu(loc1.text, lng, loc1.speak);
+    pushBabu(`${loc1.text}\n\n${MISC[lng].stillAsk}`, lng, `${loc1.speak} ${MISC[lng].stillAsk}`);
   };
 
   const commit = (p: FieldValue) => {
@@ -332,15 +389,19 @@ export default function App() {
     } else ask(next, { lang: L.lang, loc: L.loc }, { text: m, speak: m });
   };
 
-  const showConfirm = (p: FieldValue) => {
+  const confirmLine = (p: FieldValue): Localized => {
     const L = live.current;
     const f = L.schema!.fields[L.idx];
+    const display = L.lang === "hi" || L.lang === "mr" ? p.value || p.latin : p.latin;
+    const build = (v: string) => CONFIRM_TMPL[L.lang].replace("{label}", L.loc[L.idx].label).replace("{value}", v);
+    return { text: build(display), speak: build(speakableValue(f.type, display)) };
+  };
+
+  const showConfirm = (p: FieldValue) => {
+    const line = confirmLine(p);
     setPending(p);
     setStage("confirming");
-    const display = L.lang === "hi" || L.lang === "mr" ? p.value || p.latin : p.latin;
-    const label = L.loc[L.idx].label;
-    const build = (v: string) => CONFIRM_TMPL[L.lang].replace("{label}", label).replace("{value}", v);
-    pushBabu(build(display), L.lang, build(speakableValue(f.type, display)));
+    pushBabu(line.text, live.current.lang, line.speak);
   };
 
   const reask = () => {
@@ -364,7 +425,7 @@ export default function App() {
   const handleInput = async (raw: string, display?: string, native?: string) => {
     const text = raw.trim();
     const L = live.current;
-    if (!text || !L.schema || L.phase !== "chat") return;
+    if (!text || !L.schema || (L.phase !== "chat" && L.phase !== "done")) return;
     getPlayer().stop();
     speakSeq.current++;
     setSpeaking(false);
@@ -372,14 +433,17 @@ export default function App() {
     setBusy("thinking");
     const f = L.schema.fields[L.idx];
     try {
-      if (L.stage === "confirming" && L.pending) {
+      if (L.stage === "discussing" && L.phase === "chat" && !L.askMode && wantsToStart(text)) startFilling();
+      else if (L.phase === "done" || L.stage === "discussing" || L.askMode) await askDoc(text);
+      else if (L.stage === "confirming" && L.pending) {
         const q = quickIntent(text);
         if (q === "yes") commit(L.pending);
         else if (q === "skip") skipField();
         else if (q === "no") reask();
         else {
           const r = await api<AnswerResult>("/api/answer", { field: f, transcript: text, lang: L.lang, stage: "confirm", current: L.pending.latin, form_language: L.schema.form_language });
-          if (r.intent === "yes") commit(L.pending);
+          if (r.intent === "question") await askDoc(text);
+          else if (r.intent === "yes") commit(L.pending);
           else if (r.intent === "skip") skipField();
           else if (r.intent === "answer" && r.valid && (r.value || r.value_latin)) showConfirm({ value: r.value, latin: r.value_latin, form: r.value_form });
           else reask();
@@ -389,6 +453,7 @@ export default function App() {
         void lidCheck(native || text, f.type);
         const r = await api<AnswerResult>("/api/answer", { field: f, transcript: text, lang: L.lang, stage: "answer", form_language: L.schema.form_language });
         if (r.intent === "skip") return skipField();
+        if (r.intent === "question") return await askDoc(text);
         // The model sometimes rejects a bad value with intent "unknown": its explanation still beats "please repeat".
         if (!r.valid && (r.problem_en || r.intent === "answer")) {
           const [prob] = await translateMany([r.problem_en || "That does not look right."], L.lang);
@@ -409,6 +474,7 @@ export default function App() {
     const L = live.current;
     if (!L.schema || busy || (L.phase !== "chat" && L.phase !== "done")) return;
     cancelRec();
+    setAskMode(false);
     setPhase("chat");
     setShowForm(false);
     ask(i, { lang: L.lang, loc: L.loc });
@@ -492,6 +558,19 @@ export default function App() {
     }, 250);
   };
 
+  const onAskTap = () => {
+    const on = !askMode;
+    setAskMode(on);
+    getPlayer().stop();
+    speakSeq.current++;
+    setSpeaking(false);
+    cancelRec();
+    if (on && !micDenied) {
+      typingRef.current = false;
+      void startRec();
+    }
+  };
+
   const onTyping = () => {
     typingRef.current = true;
     cancelRec();
@@ -541,6 +620,11 @@ export default function App() {
     setUploadErr(null);
     setPasteText("");
     setLetter("");
+    setAskMode(false);
+    setTyped("");
+    docText.current = "";
+    explanation.current.clear();
+    qaHistory.current = [];
   };
 
   const total = schema?.fields.length ?? 0;
@@ -584,7 +668,7 @@ export default function App() {
           <div className="text-center">
             <h1 className="text-3xl font-extrabold leading-tight text-navy sm:text-5xl">Every Indian has paid a tout to fill a form.</h1>
             <p className="mt-3 text-lg font-semibold text-saffron-2 sm:text-2xl">Apna Babu does it free, in your language.</p>
-            <p className="mt-2 text-sm text-ink/60">English · हिंदी · मराठी · Hinglish — just speak, Babu fills the form.</p>
+            <p className="mt-2 text-sm text-ink/60">English · हिंदी · मराठी · Hinglish — Babu explains it, answers your questions and fills the form.</p>
           </div>
 
           {phase === "reading" ? (
@@ -653,7 +737,7 @@ export default function App() {
           <div className="mx-auto mt-5 max-w-md rounded-xl border border-navy/15 bg-white p-4 text-left text-sm shadow-sm">
             <div className="font-bold text-navy">{schema?.title}</div>
             <div className="mt-1 text-ink/70">{schema?.summary_en}</div>
-            {schema && !schema.is_form && <div className="mt-2 rounded bg-saffron/15 px-2 py-1 text-xs font-semibold text-saffron-2">This is a letter/notice, so Babu will help you write a reply document.</div>}
+            {schema && !schema.is_form && <div className="mt-2 rounded bg-saffron/15 px-2 py-1 text-xs font-semibold text-saffron-2">This is not a form, so Babu will explain it and help you write the right letter.</div>}
           </div>
           {phase === "preparing" ? (
             <div className="mt-10 flex flex-col items-center gap-3">
@@ -676,6 +760,8 @@ export default function App() {
 
   // ---------- chat / done ----------
   const done = phase === "done";
+  const discussing = !done && stage === "discussing";
+  const asking = done || discussing || askMode;
   return (
     <div className="flex h-dvh flex-col">
       {header}
@@ -696,7 +782,7 @@ export default function App() {
             {msgs.map((m) => (
               <div key={m.id} className={`bubble-in flex ${m.from === "user" ? "justify-end" : "justify-start"}`}>
                 {m.from === "babu" && <span className="mr-2 mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-navy text-base">🧑‍💼</span>}
-                <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm ${m.from === "babu" ? "rounded-tl-sm bg-white text-ink" : "rounded-tr-sm bg-navy text-white"}`}>
+                <div className={`max-w-[82%] whitespace-pre-line rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm ${m.from === "babu" ? "rounded-tl-sm bg-white text-ink" : "rounded-tr-sm bg-navy text-white"}`}>
                   {m.text}
                   {m.from === "babu" && (
                     <button onClick={() => (cancelRec(), speak(m.speak ?? m.text, m.lang, true))} title={t(lang, "replay")} aria-label={t(lang, "replay")} className="ml-2 align-middle text-base opacity-60 hover:opacity-100">🔊</button>
@@ -737,54 +823,61 @@ export default function App() {
             </div>
           )}
 
-          {done ? (
-            <div className="border-t border-navy/10 bg-white/80 p-3 lg:hidden">
-              {actionsBar()}
-              <button onClick={() => setShowForm(true)} className="mt-2 w-full rounded-lg bg-saffron px-4 py-2.5 font-bold text-white lg:hidden">{t(lang, "viewForm")} ({filledCount}/{total})</button>
-            </div>
-          ) : (
-            <div className="border-t border-navy/10 bg-white/80 px-3 pb-3 pt-2">
-              <div className="mb-2 flex gap-2 lg:hidden">
-                <button onClick={() => setShowForm(true)} className="flex-1 rounded-lg border border-navy/20 bg-paper py-1.5 text-sm font-semibold text-navy">📋 {t(lang, "viewForm")} ({filledCount}/{total})</button>
-                <button disabled={!!busy} onClick={() => (cancelRec(), skipField())} className="rounded-lg border border-navy/20 px-3 py-1.5 text-sm font-semibold text-navy sm:hidden">{t(lang, "skip")}</button>
+          <div className="border-t border-navy/10 bg-white/80 px-3 pb-3 pt-2">
+            {done && (
+              <div className="mb-2 lg:hidden">
+                {actionsBar()}
+                <button onClick={() => setShowForm(true)} className="mt-2 w-full rounded-lg bg-saffron px-4 py-2.5 font-bold text-white">{t(lang, "viewForm")} ({filledCount}/{total})</button>
               </div>
-              {micDenied && <p className="mb-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">{t(lang, "micDenied")}</p>}
-              {!micDenied && (recording || speaking) && (
-                <p className="mb-2 text-center text-xs font-semibold text-navy" aria-live="polite">
-                  {recording ? <>🔴 {t(lang, "listening")} <span className="font-normal text-ink/60">{t(lang, "autoSend")}</span></> : <>🔊 {t(lang, "speaking")}</>}
-                </p>
-              )}
-              <div className="flex items-center gap-2">
-                {!micDenied && (
-                  <div className="flex w-20 shrink-0 flex-col items-center">
-                    <button
-                      disabled={!!busy}
-                      onClick={onMicTap}
-                      aria-label={recording ? t(lang, "stopTalking") : t(lang, "tapToTalk")}
-                      className={`grid h-16 w-16 select-none place-items-center rounded-full text-3xl text-white shadow-lg transition disabled:opacity-40 ${recording ? "rec-pulse bg-red-600" : "bg-navy hover:bg-navy-2"}`}
-                    >
-                      {recording ? "⏹️" : "🎙️"}
-                    </button>
-                    <span className="mt-1 text-center text-[10px] font-semibold leading-tight text-ink/60">{recording ? t(lang, "stopTalking") : t(lang, "tapToTalk")}</span>
-                  </div>
+            )}
+            {!done && discussing && (
+              <button disabled={!!busy} onClick={() => (cancelRec(), pushUser(t(lang, "startFilling"), lang), startFilling())} className="mb-2 w-full rounded-lg bg-saffron px-4 py-2.5 font-bold text-white disabled:opacity-40">📝 {t(lang, "startFilling")}</button>
+            )}
+            {!done && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                <button onClick={() => setShowForm(true)} className="flex-1 whitespace-nowrap rounded-lg border border-navy/20 bg-paper px-2 py-1.5 text-sm font-semibold text-navy lg:hidden">📋 {t(lang, "viewForm")} ({filledCount}/{total})</button>
+                {!discussing && (
+                  <button disabled={!!busy} onClick={onAskTap} aria-pressed={askMode} className={`flex-1 rounded-lg border px-2 py-1.5 text-sm font-semibold lg:flex-none lg:px-3 ${askMode ? "border-saffron bg-saffron text-white" : "border-navy/20 text-navy"}`}>❓ {t(lang, "askBtn")}</button>
                 )}
-                <form
-                  className="flex min-w-0 flex-1 gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const v = typed;
-                    setTyped("");
-                    typingRef.current = false;
-                    void handleInput(v);
-                  }}
-                >
-                  <input aria-label={t(lang, "typeHere")} value={typed} disabled={!!busy} onFocus={onTyping} onChange={(e) => (onTyping(), setTyped(e.target.value))} placeholder={t(lang, "typeHere")} className="min-w-0 flex-1 rounded-xl border border-navy/25 bg-white px-3 py-3 text-[15px] outline-none focus:border-saffron" />
-                  <button disabled={!typed.trim() || !!busy} className="rounded-xl bg-saffron px-4 font-bold text-white disabled:opacity-40">{t(lang, "send")}</button>
-                </form>
-                <button disabled={!!busy} onClick={() => (cancelRec(), skipField())} className="hidden rounded-xl border border-navy/25 px-3 py-3 text-sm font-semibold text-navy sm:block">{t(lang, "skip")}</button>
+                {!discussing && <button disabled={!!busy} onClick={() => (cancelRec(), skipField())} className="rounded-lg border border-navy/20 px-3 py-1.5 text-sm font-semibold text-navy sm:hidden">{t(lang, "skip")}</button>}
               </div>
+            )}
+            {micDenied && <p className="mb-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">{t(lang, "micDenied")}</p>}
+            {!micDenied && (recording || speaking) && (
+              <p className="mb-2 text-center text-xs font-semibold text-navy" aria-live="polite">
+                {recording ? <>🔴 {t(lang, "listening")} <span className="font-normal text-ink/60">{t(lang, "autoSend")}</span></> : <>🔊 {t(lang, "speaking")}</>}
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              {!micDenied && (
+                <div className="flex w-20 shrink-0 flex-col items-center">
+                  <button
+                    disabled={!!busy}
+                    onClick={onMicTap}
+                    aria-label={recording ? t(lang, "stopTalking") : t(lang, "tapToTalk")}
+                    className={`grid h-16 w-16 select-none place-items-center rounded-full text-3xl text-white shadow-lg transition disabled:opacity-40 ${recording ? "rec-pulse bg-red-600" : "bg-navy hover:bg-navy-2"}`}
+                  >
+                    {recording ? "⏹️" : "🎙️"}
+                  </button>
+                  <span className="mt-1 text-center text-[10px] font-semibold leading-tight text-ink/60">{recording ? t(lang, "stopTalking") : t(lang, "tapToTalk")}</span>
+                </div>
+              )}
+              <form
+                className="flex min-w-0 flex-1 gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const v = typed;
+                  setTyped("");
+                  typingRef.current = false;
+                  void handleInput(v);
+                }}
+              >
+                <input aria-label={asking ? t(lang, "askHere") : t(lang, "typeHere")} value={typed} disabled={!!busy} onFocus={onTyping} onChange={(e) => (onTyping(), setTyped(e.target.value))} placeholder={asking ? t(lang, "askHere") : t(lang, "typeHere")} className="min-w-0 flex-1 rounded-xl border border-navy/25 bg-white px-3 py-3 text-[15px] outline-none focus:border-saffron" />
+                <button disabled={!typed.trim() || !!busy} className="rounded-xl bg-saffron px-4 font-bold text-white disabled:opacity-40">{t(lang, "send")}</button>
+              </form>
+              {!done && !discussing && <button disabled={!!busy} onClick={() => (cancelRec(), skipField())} className="hidden rounded-xl border border-navy/25 px-3 py-3 text-sm font-semibold text-navy sm:block">{t(lang, "skip")}</button>}
             </div>
-          )}
+          </div>
         </section>
 
         {/* RIGHT: live form */}

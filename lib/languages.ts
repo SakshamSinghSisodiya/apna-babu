@@ -9,6 +9,7 @@ export interface LangConfig {
   label: string; // button label, in the language itself
   code: string; // BCP-47 code for STT / TTS
   translateTarget: string; // Sarvam Translate target
+  translateModel?: string; // Mayura unless set
   translateMode: "formal" | "code-mixed"; // "formal" keeps Hindi/Marathi free of English words
   romanDisplay: boolean; // show text in Roman script
   sttMode?: string; // Saaras mode
@@ -19,7 +20,7 @@ export interface LangConfig {
 export const LANGUAGES: Record<LangId, LangConfig> = {
   en: { id: "en", label: "English", code: "en-IN", translateTarget: "en-IN", translateMode: "formal", romanDisplay: true, yes: "yes", no: "no" },
   hi: { id: "hi", label: "हिंदी", code: "hi-IN", translateTarget: "hi-IN", translateMode: "formal", romanDisplay: false, yes: "हाँ", no: "नहीं" },
-  mr: { id: "mr", label: "मराठी", code: "mr-IN", translateTarget: "mr-IN", translateMode: "formal", romanDisplay: false, yes: "हो", no: "नाही" },
+  mr: { id: "mr", label: "मराठी", code: "mr-IN", translateTarget: "mr-IN", translateModel: "sarvam-translate:v1", translateMode: "formal", romanDisplay: false, yes: "हो", no: "नाही" },
   hinglish: { id: "hinglish", label: "Hinglish", code: "hi-IN", translateTarget: "hi-IN", translateMode: "code-mixed", romanDisplay: true, sttMode: "codemix", yes: "haan", no: "nahi" },
 };
 
@@ -30,6 +31,14 @@ export const LANG_NAME_EN: Record<LangId, string> = {
   hi: "Hindi (Devanagari)",
   mr: "Marathi (Devanagari)",
   hinglish: "Hinglish (Hindi-English mix in Roman script)",
+};
+
+// How the chat model should write when it explains a document or answers a question directly.
+export const LANG_WRITING: Record<LangId, string> = {
+  en: "very simple everyday English",
+  hi: "very simple everyday spoken Hindi in Devanagari script, the way a neighbour talks, not formal officialese. Common words like बिल, फ़ॉर्म, मीटर are fine in Devanagari",
+  mr: "very simple everyday spoken Marathi in Devanagari script, the way a neighbour talks, not formal officialese and not Hindi. Common words like बिल, फॉर्म, मीटर are fine in Devanagari",
+  hinglish: "natural spoken Hinglish in ROMAN (Latin) script only, never Devanagari, e.g. \"Aapko 20/11/2026 tak paise bharne hain\"",
 };
 
 // Map a Sarvam LID result to one of our languages.

@@ -46,7 +46,7 @@ export interface FieldValue {
 }
 
 export interface AnswerResult {
-  intent: "answer" | "yes" | "no" | "skip" | "unknown" | "edit";
+  intent: "answer" | "yes" | "no" | "skip" | "unknown" | "edit" | "question";
   value: string;
   value_latin: string;
   value_form?: string;

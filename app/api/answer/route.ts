@@ -7,7 +7,8 @@ import type { AnswerResult, Field, FormLang } from "@/lib/types";
 export const maxDuration = 60;
 
 const SYSTEM = `You help a person fill an Indian paper form by voice. The user's transcript may be in English, Hindi, Marathi or Hinglish and may contain speech-recognition errors. Output ONLY JSON:
-{"intent":"answer|yes|no|skip|unknown|edit","value":"","value_latin":"","value_form":"","valid":true,"problem_en":""}
+{"intent":"answer|yes|no|skip|unknown|edit|question","value":"","value_latin":"","value_form":"","valid":true,"problem_en":""}
+- In either stage, intent="question" if the user is clearly ASKING something about the document, the form or this field instead of answering, e.g. "why do you need my Aadhaar?", "what is the last date?", "ye form kis liye hai?", "IFSC क्या होता है?". A plain value is never a question.
 - stage "answer": the user is giving the value for the field. intent="answer" and extract ONLY the value (drop filler like "my name is").
   * value = the value as the user said it, in their own script (Devanagari for Hindi/Marathi speech, Roman for English/Hinglish).
   * value_latin = the value to print on an ENGLISH form in Latin script: transliterate names/places/addresses (e.g. "राहुल पाटील" -> "Rahul Patil"); translate descriptive answers by meaning (e.g. "किसान" -> "Farmer", "मेरी पत्नी" -> "Wife"); for choice fields give the exact matching option in English.
@@ -61,7 +62,7 @@ export const POST = handle(async (req) => {
   });
   const r = await chatJSON<AnswerResult>(SYSTEM, user, 900);
   const out: AnswerResult = {
-    intent: (["answer", "yes", "no", "skip", "unknown", "edit"].includes(r.intent) ? r.intent : "unknown") as AnswerResult["intent"],
+    intent: (["answer", "yes", "no", "skip", "unknown", "edit", "question"].includes(r.intent) ? r.intent : "unknown") as AnswerResult["intent"],
     value: String(r.value ?? ""),
     value_latin: String(r.value_latin ?? r.value ?? ""),
     valid: r.valid !== false && !(r.intent === "unknown" && r.problem_en), // a stated problem is a rejection, whatever the flag says

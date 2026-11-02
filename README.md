@@ -15,8 +15,9 @@ Bank forms, scholarship applications, electricity connections and court notices 
 1. **Upload** a photo or PDF of a form or official document, or pick a built-in sample.
 2. **Read:** Sarvam Vision reads the page and the chat model works out which details are needed. If it's a bill, notice or summons rather than a form, Babu explains it and proposes the right reply (complaint, reply letter, RTI application).
 3. **Choose a language:** English, हिंदी, मराठी or Hinglish.
-4. **Talk:** Babu asks for one detail at a time, out loud, then the mic opens by itself. Your answer goes in when you tap Done or pause for 3 seconds, or you can type instead. Spoken numbers and dates are normalised, every value is validated and read back for confirmation, and the form on screen fills in live, in the form's own language whichever language you spoke.
-5. **Done:** a print-ready form with a "FILLED ✓" stamp, a spoken summary of what's missing and what to carry, and print, download and share buttons.
+4. **Understand:** Babu explains the document in plain spoken language: what it is, what it says about you, every amount and deadline exactly as printed, and what to do next. Ask it anything, by voice or typing, then say "start" when you are ready. You can keep asking at any point, even after the form is done.
+5. **Talk:** Babu asks for one detail at a time, out loud, then the mic opens by itself. Your answer goes in when you tap Done or pause for 2 seconds, or you can type instead. Spoken numbers and dates are normalised, every value is validated and read back for confirmation, and the form on screen fills in live, in the form's own language whichever language you spoke.
+6. **Done:** a print-ready form with a "FILLED ✓" stamp, a spoken summary of what's missing and what to carry, and print, download and share buttons.
 
 Long forms are condensed to the 25 details that matter most, so check the printed copy against the original.
 
@@ -29,8 +30,8 @@ English, Hindi, Marathi and Hinglish (Roman script), with more coming. Languages
 | API | Model | What it does in Apna Babu |
 | --- | --- | --- |
 | Document Intelligence | Sarvam Vision | Reads the uploaded photo or PDF into text, as an async job the app polls (`/api/doc/*`) |
-| Chat Completion | `sarvam-105b-conversations`, falling back to `gemma4` | Builds the field schema, extracts each answer, generates the closing summary, and drafts reply letters for notices |
-| Translate | `mayura:v1` | Translates every question, label, validation message and summary. All questions are translated once, right after you pick a language, so each turn is fast. Hinglish uses `code-mixed` mode |
+| Chat Completion | `sarvam-105b-conversations` and `gemma4` | Builds the field schema, extracts each answer, generates the closing summary, and drafts reply letters. `gemma4` writes explanations and answers to questions directly in your language, and any sentence quoting a figure that isn't in the document is dropped |
+| Translate | `mayura:v1`, `sarvam-translate:v1` for Marathi | Translates every question, label, validation message and summary. All questions are translated once, right after you pick a language, so each turn is fast. Hinglish uses `code-mixed` mode. Any number that changes in translation is restored from the English |
 | Text-to-Speech | `bulbul:v4-flash` | Speaks every line in one consistent voice across all four languages |
 | Speech-to-Text | `saaras:v4` | Transcribes answers, in `codemix` mode for Hinglish. A second auto-detect pass catches the language actually being spoken |
 | Language Identification | `/text-lid` | Notices when you speak a different language from the one you chose, and offers to switch |
