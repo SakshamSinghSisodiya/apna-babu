@@ -58,6 +58,27 @@ export async function sarvamJSON<T = any>(path: string, opts: CallOpts = {}): Pr
 // ---- Chat -----------------------------------------------------------------
 const CHAT_MODELS = ["sarvam-105b-conversations", "gemma4"];
 
+// A reply cut off by max_tokens: keep everything up to the last complete object and close what's still open.
+function repairTruncated(text: string): string | null {
+  const stack: string[] = [];
+  let inString = false;
+  let best: { end: number; open: string[] } | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") stack.push("}");
+    else if (c === "[") stack.push("]");
+    else if (c === "}" || c === "]") {
+      stack.pop();
+      if (c === "}" && stack.length) best = { end: i + 1, open: [...stack] };
+    }
+  }
+  return best ? text.slice(0, best.end) + best.open.reverse().join("") : null;
+}
+
 export function extractJSON(text: string): any {
   const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/```json|```/gi, "").trim();
   try {
@@ -65,7 +86,13 @@ export function extractJSON(text: string): any {
   } catch {}
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
-  if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(cleaned.slice(start, end + 1));
+    } catch {}
+    const repaired = repairTruncated(cleaned.slice(start));
+    if (repaired) return JSON.parse(repaired);
+  }
   throw new Error("no json");
 }
 
@@ -88,7 +115,7 @@ export async function chat(messages: { role: string; content: string }[], maxTok
   throw lastErr;
 }
 
-export async function chatJSON<T = any>(system: string, user: string, maxTokens = 1500): Promise<T> {
+export async function chatJSON<T = any>(system: string, user: string, maxTokens = 1500, timeoutMs?: number): Promise<T> {
   const messages = [
     { role: "system", content: system },
     { role: "user", content: user },
@@ -97,7 +124,7 @@ export async function chatJSON<T = any>(system: string, user: string, maxTokens 
   let text = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      text = await chat(messages, maxTokens);
+      text = await chat(messages, maxTokens, timeoutMs);
     } catch (e) {
       throw e; // chat() already tried every model; retrying would outlast the route's time limit
     }

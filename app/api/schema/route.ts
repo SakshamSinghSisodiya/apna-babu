@@ -4,7 +4,7 @@ import type { FormSchema } from "@/lib/types";
 
 export const maxDuration = 60;
 
-const SYSTEM = `You are Apna Babu, an expert at Indian government and bank paperwork. You receive the text (markdown) of a scanned document. Output ONLY a JSON object, no prose:
+const SYSTEM = `You are Apna Babu, an expert at Indian government and bank paperwork. You receive the text (markdown) of a scanned document. Output ONLY a single-line minified JSON object, no prose, no line breaks or indentation. Keep "fields" as the LAST key. Leave out optional keys that do not apply (options, hint_en, prefilled_value, label_form, title_form):
 {
  "doc_type": "short_snake_case",
  "is_form": true|false,
@@ -18,14 +18,14 @@ const SYSTEM = `You are Apna Babu, an expert at Indian government and bank paper
 Rules:
 - If the document is a FORM or application: fields = the blanks the user must fill, in order. Skip office-use-only boxes, signature and declaration boxes.
 - If it is NOT a form (bill, notice, court summons, bank letter, etc.): set is_form=false, explain it simply in summary_en (what it says, any deadline or amount), choose the right RESPONSE document (complaint, reply letter, RTI application, request letter), set title to that document, and make fields = the details needed to write it (applicant name, address, reference/case/account number from the document as prefilled_value, date, the grievance or request in the user's words, etc.).
-- At most 25 fields, at least 3. Merge tiny related blanks (e.g. address lines -> one address field).
+- At most 25 fields, at least 3: on a long form keep the 25 that matter most for the applicant. Merge tiny related blanks (e.g. address lines -> one address field; one box per letter or digit -> one field). Keep labels and questions short.
 - Use type "name" for person names, "address" for postal addresses, "number" for amounts/IDs/Aadhaar/account numbers.`;
 
 export const POST = handle(async (req) => {
   const { markdown } = await req.json();
   const text = String(markdown ?? "").slice(0, 12000);
   if (text.trim().length < 20) throw new Error("empty document");
-  const s = await chatJSON<FormSchema>(SYSTEM, "DOCUMENT:\n" + text, 3500);
+  const s = await chatJSON<FormSchema>(SYSTEM, "DOCUMENT:\n" + text, 6000, 28000);
   if (!Array.isArray(s.fields) || s.fields.length === 0) throw new Error("no fields");
   const seen = new Set<string>();
   s.fields = s.fields.slice(0, 25).map((f, i) => {

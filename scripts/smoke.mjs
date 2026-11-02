@@ -112,6 +112,13 @@ await step("schema: notice proposes a response document", async () => {
   assert(!s.is_form && s.fields.length >= 3, JSON.stringify(s).slice(0, 300));
   return `${s.title}: ${s.fields.length} fields`;
 });
+await step("schema: very long form is not cut off", async () => {
+  const blanks = ["Applicant name", "Father name", "Mother name", "Spouse name", "Date of birth", "Place of birth", "Gender", "Marital status", "Religion", "Caste", "Nationality", "Occupation", "Annual income", "Education", "Permanent address", "Permanent district", "Permanent state", "Permanent PIN", "Present address", "Present district", "Present state", "Present PIN", "Mobile", "Alternate mobile", "Email", "Aadhaar", "PAN", "Voter ID", "Ration card", "Driving licence", "Bank name", "Branch", "Account number", "IFSC", "Nominee name", "Nominee relation", "Nominee age", "Guardian name", "Guardian address", "Land survey number", "Land area", "Village", "Taluka", "Previous application number", "Previous application date", "Reference 1 name", "Reference 1 mobile", "Reference 2 name", "Reference 2 mobile", "Declaration place"];
+  const markdown = "GOVERNMENT OF MAHARASHTRA\nCOMPOSITE WELFARE SCHEME APPLICATION\n" + blanks.map((b, i) => `${i + 1}. ${b}: ____________`).join("\n");
+  const s = await post("/api/schema", { markdown });
+  assert(s.is_form && s.title && s.fields.length >= 15 && s.fields.length <= 25, `${s.fields?.length} fields`);
+  return `${s.title}: ${s.fields.length} fields`;
+});
 await step("letter", async () => {
   const { letter_en } = await post("/api/letter", { title: "Complaint about high electricity bill", summary: "A disconnection notice for Rs 48,230.", details: [{ label: "Name", value: "Rahul Patil" }, { label: "Consumer number", value: "170012345678" }] });
   assert(letter_en.includes("Rahul Patil"), letter_en);
