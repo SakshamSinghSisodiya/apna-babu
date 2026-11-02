@@ -1,6 +1,6 @@
 import type { LangId } from "./languages";
 
-export type FormLang = "en" | "hi" | "mr";
+export type FormLang = "en" | "hi" | "mr" | "bn" | "gu" | "kn" | "ml" | "od" | "pa" | "ta" | "te";
 export type FieldType = "text" | "name" | "date" | "phone" | "pincode" | "email" | "number" | "address" | "choice" | "yesno";
 
 export interface Field {
@@ -11,6 +11,7 @@ export interface Field {
   section: string;
   type: FieldType;
   options?: string[];
+  options_form?: string[]; // options as printed, same order, when the form is not in English
   required: boolean;
   hint_en?: string;
   prefilled_value?: string;

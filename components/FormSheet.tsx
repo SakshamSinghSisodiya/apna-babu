@@ -55,6 +55,7 @@ export default function FormSheet({ schema, values, highlight, done, lang, lette
                   onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onEdit?.(it.idx))}
                   role={onEdit ? "button" : undefined}
                   tabIndex={onEdit ? 0 : undefined}
+                  title={onEdit ? t(lang, "tapToEdit") : undefined}
                   className={`rounded px-1.5 py-1 ${onEdit ? "cursor-pointer hover:bg-saffron/10" : ""} ${highlight === it.id ? "fill-flash" : ""} ${it.label.length > 38 || (filled && v.latin.length > 36) ? "sm:col-span-2" : ""}`}
                 >
                   <dt className="text-[11px] font-medium text-ink/60">{it.label}</dt>

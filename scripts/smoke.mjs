@@ -102,6 +102,31 @@ for (const [name, field, transcript, lang, check] of ANSWERS) {
   });
 }
 
+const DEVA = /[ऀ-ॿ]/;
+const FORM_VALUES = [
+  ["Hindi speech on an English form is translated", FIELD("text", "Occupation"), "मैं किसान हूँ", "hi", "en", (r) => /farmer/i.test(r.value_latin)],
+  ["Hindi name on an English form is transliterated", FIELD("name", "Full name"), "राहुल पाटील", "hi", "en", (r) => /rahul/i.test(r.value_latin) && !DEVA.test(r.value_latin)],
+  ["English speech on a Hindi form", FIELD("text", "Occupation"), "I am a farmer", "en", "hi", (r) => /किसान|कृषक/.test(r.value_form)],
+  ["English name on a Marathi form", FIELD("name", "Full name"), "Rahul Patil", "en", "mr", (r) => DEVA.test(r.value_form)],
+  ["Hindi speech on a Marathi form", FIELD("text", "Occupation"), "मैं किसान हूँ", "hi", "mr", (r) => /शेतकरी/.test(r.value_form)],
+  ["English name on a Tamil form", FIELD("name", "Full name"), "Rahul Patil", "en", "ta", (r) => /[஀-௿]/.test(r.value_form)],
+  ["choice prints the form's own option", FIELD("choice", "Gender", { options: ["Male", "Female"], options_form: ["पुरुष", "महिला"] }), "female", "en", "hi", (r) => r.value_latin === "Female" && r.value_form === "महिला"],
+  ["yes/no is one word on a Marathi form", FIELD("yesno", "Married"), "yes I am", "en", "mr", (r) => /^(होय|हो)\.?$/.test(r.value_form.trim())],
+  ["PAN stays as is on a Hindi form", FIELD("text", "PAN number"), "ABCDE1234F", "en", "hi", (r) => /^ABCDE1234F$/i.test(r.value_form)],
+];
+for (const [name, field, transcript, lang, form_language, check] of FORM_VALUES) {
+  await step(`form language: ${name}`, async () => {
+    const r = await post("/api/answer", { field, transcript, lang, stage: "answer", form_language });
+    assert(check(r), JSON.stringify(r));
+    return r.value_form || r.value_latin;
+  });
+}
+
+await step("schema: Hindi form stays Hindi", async () => {
+  const s = await post("/api/schema", { markdown: "ग्राम पंचायत कार्यालय\nजन्म प्रमाण पत्र आवेदन\nआवेदक का नाम: ____\nपिता का नाम: ____\nमोबाइल नंबर: ____\nलिंग: पुरुष / महिला" });
+  assert(s.form_language === "hi" && s.fields.some((f) => DEVA.test(f.label_form ?? "")), JSON.stringify(s).slice(0, 300));
+  return `${s.title_form}: ${s.fields.length} fields`;
+});
 await step("schema: English form", async () => {
   const s = await post("/api/schema", { markdown: "BANK OF BHARAT\nFIXED DEPOSIT FORM\nName: ____\nDate of birth: ____\nMobile: ____\nPIN: ____\nAmount: ____\nAttach PAN copy" });
   assert(s.is_form && s.fields.length >= 3, JSON.stringify(s).slice(0, 300));

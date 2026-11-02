@@ -44,6 +44,7 @@ export default function App() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [busy, setBusy] = useState<null | "thinking">(null);
   const [recording, setRecording] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [micDenied, setMicDenied] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -56,17 +57,22 @@ export default function App() {
   const [sharedNote, setSharedNote] = useState("");
   const [letter, setLetter] = useState("");
 
-  const live = useRef({ schema, lang, loc, values, idx, stage, pending, phase });
-  live.current = { schema, lang, loc, values, idx, stage, pending, phase };
+  const live = useRef({ schema, lang, loc, values, idx, stage, pending, phase, busy, micDenied });
+  live.current = { schema, lang, loc, values, idx, stage, pending, phase, busy, micDenied };
   const player = useRef<Player | null>(null);
   const recorder = useRef<Recorder | null>(null);
   const recordingRef = useRef(false);
+  const recStarting = useRef(false);
+  const recToken = useRef(0);
+  const typingRef = useRef(false); // the user reached for the keyboard: leave the mic off
+  const listenAfterSpeech = useRef<(seq: number) => void>(() => {});
   const ttsCache = useRef(new Map<string, string[]>());
   const msgId = useRef(0);
   const scroller = useRef<HTMLDivElement>(null);
-  const holdStart = useRef(0);
-  const toggleMode = useRef(false);
   const speakSeq = useRef(0);
+  const session = useRef(0); // bumped by "start over" so late replies from the old form are ignored
+  const lastFile = useRef<File | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const getPlayer = () => (player.current ??= new Player());
 
@@ -80,6 +86,15 @@ export default function App() {
     return () => clearInterval(id);
   }, [phase]);
 
+  useEffect(() => {
+    document.documentElement.lang = LANGUAGES[lang].code;
+  }, [lang]);
+
+  // The input is disabled while Babu thinks, which drops focus: hand it back to someone who is typing.
+  useEffect(() => {
+    if (!busy && phase === "chat" && typingRef.current) inputRef.current?.focus();
+  }, [busy, phase]);
+
   // ---------- speech ----------
   const speak = useCallback(async (text: string, lng: LangId, force = false) => {
     if (!text.trim() || (!force && recordingRef.current)) return;
@@ -92,10 +107,17 @@ export default function App() {
         ttsCache.current.set(key, audios);
       }
       if (seq !== speakSeq.current || (!force && recordingRef.current)) return; // a newer line, or the user started talking
-      await getPlayer().play(audios);
+      setSpeaking(true);
+      const finished = await getPlayer().play(audios);
+      if (seq !== speakSeq.current) return;
+      setSpeaking(false);
+      if (!finished) return;
     } catch {
       /* text is already on screen; voice is a bonus */
+      if (seq !== speakSeq.current) return;
+      setSpeaking(false);
     }
+    listenAfterSpeech.current(seq);
   }, []);
 
   const pushBabu = useCallback(
@@ -129,6 +151,9 @@ export default function App() {
   };
 
   const processFile = async (file: File) => {
+    const gen = session.current;
+    let step: "read" | "understand" = "read";
+    lastFile.current = file;
     getPlayer().unlock();
     setUploadErr(null);
     setPhase("reading");
@@ -145,7 +170,8 @@ export default function App() {
       let ok = false;
       while (Date.now() - t0 < 85000) {
         await sleep(2000);
-        const s = await api<{ status: string }>(`/api/doc/status?job_id=${job_id}`);
+        if (gen !== session.current) return;
+        const s = await api<{ status: string }>(`/api/doc/status?job_id=${job_id}`).catch(() => ({ status: "retry" })); // one failed poll is not a failed job
         if (s.status === "completed" || s.status === "partially_completed") {
           ok = true;
           break;
@@ -154,10 +180,22 @@ export default function App() {
       }
       if (!ok) throw new Error("timeout");
       const { markdown } = await api<{ markdown: string }>(`/api/doc/result?job_id=${job_id}`);
+      if (gen !== session.current) return;
+      step = "understand";
       await processMarkdown(markdown);
     } catch (e) {
+      if (gen !== session.current) return;
       setPhase("upload");
-      setUploadErr(e instanceof Error && e.message === "big" ? "That file is too large (max ~4 MB). Try a smaller photo, or use a sample form." : "Babu could not read this document. You can paste its text below, or use a sample form.");
+      const why = e instanceof Error ? e.message : "";
+      setUploadErr(
+        why === "big"
+          ? "That file is too large (max about 4 MB). Try a smaller photo, or use a sample form."
+          : why === "timeout"
+            ? "This document is taking too long to read. Try a photo of just the first page, paste its text below, or use a sample form."
+            : step === "understand"
+              ? "Babu read this document but could not work out what it needs. Try again, paste the important part below, or use a sample form."
+              : "Babu could not read this document. Try a clearer photo, paste its text below, or use a sample form.",
+      );
     }
   };
 
@@ -211,9 +249,13 @@ export default function App() {
     if (!schema) return;
     getPlayer().unlock();
     getPlayer().stop();
+    (recorder.current ??= new Recorder()).unlock();
+    typingRef.current = false;
+    const gen = session.current;
     setLang(lng);
     setPhase("preparing");
     const { introLoc, locs } = await prepare(schema, lng);
+    if (gen !== session.current) return;
     const vals: Record<string, FieldValue> = {};
     schema.fields.forEach((f) => {
       if (f.prefilled_value) vals[f.id] = { value: f.prefilled_value, latin: f.prefilled_value };
@@ -235,6 +277,7 @@ export default function App() {
   const switchLang = async (lng: LangId) => {
     const L = live.current;
     if (!L.schema) return;
+    cancelRec();
     setLidSuggest(null);
     setBusy("thinking");
     const { locs } = await prepare(L.schema, lng);
@@ -247,6 +290,7 @@ export default function App() {
   const finish = async (vals: Record<string, FieldValue>, lng: LangId, _locs: FieldLoc[]) => {
     const L = live.current;
     const sch = L.schema!;
+    const gen = session.current;
     setPhase("done");
     setStage("asking");
     setShowForm(true);
@@ -264,6 +308,7 @@ export default function App() {
         .catch(() => {});
     }
     const [loc1] = await translateMany([en], lng);
+    if (gen !== session.current) return;
     setBusy(null);
     pushBabu(loc1.text, lng, loc1.speak);
   };
@@ -326,6 +371,9 @@ export default function App() {
     const text = raw.trim();
     const L = live.current;
     if (!text || !L.schema || L.phase !== "chat") return;
+    getPlayer().stop();
+    speakSeq.current++;
+    setSpeaking(false);
     pushUser(display ?? text, L.lang);
     setBusy("thinking");
     const f = L.schema.fields[L.idx];
@@ -365,7 +413,8 @@ export default function App() {
 
   const editField = (i: number) => {
     const L = live.current;
-    if (!L.schema || busy || recording || (L.phase !== "chat" && L.phase !== "done")) return;
+    if (!L.schema || busy || (L.phase !== "chat" && L.phase !== "done")) return;
+    cancelRec();
     setPhase("chat");
     setShowForm(false);
     ask(i, { lang: L.lang, loc: L.loc });
@@ -373,17 +422,32 @@ export default function App() {
 
   // ---------- microphone ----------
   const startRec = async () => {
-    if (busy || recording) return;
-    getPlayer().unlock();
+    if (recordingRef.current || recStarting.current) return;
+    recStarting.current = true;
+    const token = ++recToken.current;
     getPlayer().stop();
+    speakSeq.current++;
+    setSpeaking(false);
     try {
       recorder.current ??= new Recorder();
-      await recorder.current.start();
+      await recorder.current.start((why) => (why === "no-speech" ? cancelRec() : void stopRec()));
+      if (token !== recToken.current) return recorder.current.cancel();
       recordingRef.current = true;
       setRecording(true);
     } catch {
-      setMicDenied(true);
+      if (token === recToken.current) setMicDenied(true);
+    } finally {
+      recStarting.current = false;
     }
+  };
+
+  // Closes the mic without sending anything, for when the user answers some other way.
+  const cancelRec = () => {
+    recToken.current++;
+    if (!recordingRef.current) return;
+    recordingRef.current = false;
+    setRecording(false);
+    recorder.current?.cancel();
   };
 
   const stopRec = async () => {
@@ -392,10 +456,15 @@ export default function App() {
     setRecording(false);
     setBusy("thinking");
     const L = live.current;
+    let heard = false;
     try {
-      const { blob, ms } = await recorder.current!.stop();
+      const rec = await recorder.current!.stop();
+      const { blob, ms } = rec;
+      heard = rec.heard;
+      // Done tapped with nothing said: that means "mic off", so don't ask again and reopen it.
+      const nothingSaid = () => heard && pushBabu(MISC[L.lang].unclear, L.lang);
       if (!blob || ms < 500) {
-        pushBabu(MISC[L.lang].unclear, L.lang);
+        nothingSaid();
         return;
       }
       const fd = new FormData();
@@ -403,31 +472,35 @@ export default function App() {
       fd.append("lang", L.lang);
       const r = await api<{ transcript: string; display: string; native: string }>("/api/stt", undefined, fd);
       if (!r.transcript.trim()) {
-        pushBabu(MISC[L.lang].unclear, L.lang);
+        nothingSaid();
         return;
       }
       setBusy(null);
       await handleInput(r.transcript, r.display, r.native);
     } catch {
-      pushBabu(MISC[L.lang].error, L.lang);
+      if (heard) pushBabu(MISC[L.lang].error, L.lang);
     } finally {
       setBusy(null);
     }
   };
 
-  const onMicDown = () => {
-    if (toggleMode.current && recordingRef.current) {
-      toggleMode.current = false;
-      void stopRec();
-      return;
-    }
-    holdStart.current = Date.now();
-    void startRec();
+  const onMicTap = () => {
+    typingRef.current = false;
+    void (recordingRef.current ? stopRec() : startRec());
   };
-  const onMicUp = () => {
-    if (!recordingRef.current || toggleMode.current) return;
-    if (Date.now() - holdStart.current < 350) toggleMode.current = true; // quick tap -> keep recording until next tap
-    else void stopRec();
+
+  // The short wait lets the end of Babu's voice die away before the mic opens.
+  listenAfterSpeech.current = (seq) => {
+    setTimeout(() => {
+      const L = live.current;
+      if (seq !== speakSeq.current || L.phase !== "chat" || L.busy || L.micDenied || typingRef.current) return;
+      void startRec();
+    }, 250);
+  };
+
+  const onTyping = () => {
+    typingRef.current = true;
+    cancelRec();
   };
 
   // ---------- result actions ----------
@@ -439,21 +512,32 @@ export default function App() {
   const download = () => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([resultText()], { type: "text/plain;charset=utf-8" }));
-    a.download = `${schema!.doc_type || "form"}.txt`;
+    a.download = `${(schema!.doc_type || "form").replace(/[^\w-]/g, "_")}.txt`;
     a.click();
+    URL.revokeObjectURL(a.href);
   };
   const share = async () => {
     try {
       if (navigator.share) await navigator.share({ title: schema!.title, text: resultText() });
       else {
         await navigator.clipboard.writeText(resultText());
-        setSharedNote("Copied!");
+        setSharedNote(t(lang, "copied"));
         setTimeout(() => setSharedNote(""), 2000);
       }
     } catch {}
   };
   const startOver = () => {
+    if (phase === "chat" && !window.confirm(t(lang, "confirmOver"))) return;
+    session.current++;
     getPlayer().stop();
+    cancelRec();
+    speakSeq.current++;
+    typingRef.current = false;
+    lastFile.current = null;
+    setSpeaking(false);
+    setBusy(null);
+    setLidSuggest(null);
+    setLang("en");
     setPhase("upload");
     setSchema(null);
     setValues({});
@@ -469,7 +553,7 @@ export default function App() {
   const filledCount = schema ? schema.fields.filter((f) => values[f.id] && !values[f.id].skipped).length : 0;
   const lastBabuId = [...msgs].reverse().find((m) => m.from === "babu")?.id;
 
-  const ActionsBar = ({ className = "" }: { className?: string }) => (
+  const actionsBar = (className = "") => (
     <div className={`no-print flex flex-wrap gap-2 ${className}`}>
       <button onClick={() => window.print()} className="rounded-lg bg-navy px-4 py-2.5 text-sm font-bold text-white shadow hover:bg-navy-2">🖨️ {t(lang, "print")}</button>
       <button onClick={download} className="rounded-lg border border-navy/30 bg-white px-3 py-2.5 text-sm font-semibold text-navy hover:bg-paper-2">⬇️ {t(lang, "download")}</button>
@@ -491,7 +575,7 @@ export default function App() {
       {phase !== "upload" && phase !== "reading" && (
         <div className="flex items-center gap-2">
           {phase !== "lang" && <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">{LANGUAGES[lang].label}</span>}
-          <button onClick={startOver} className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold hover:bg-white/20">↺</button>
+          <button onClick={startOver} title={t(lang, "startOver")} aria-label={t(lang, "startOver")} className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold hover:bg-white/20">↺</button>
         </div>
       )}
     </header>
@@ -530,12 +614,17 @@ export default function App() {
                 <span className="text-4xl">📄</span>
                 <span className="text-lg font-bold text-navy">Upload a form or official letter</span>
                 <span className="text-sm text-ink/60">Photo (JPG / PNG) or PDF — notice, bill, summons, bank letter, any form</span>
-                <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && processFile(e.target.files[0])} />
+                <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = ""; // so picking the same file again after a failure still fires
+                    if (file) void processFile(file);
+                  }} />
               </label>
 
               {uploadErr && (
                 <div className="mt-4 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800">
                   <p>{uploadErr}</p>
+                  {lastFile.current && <button onClick={() => processFile(lastFile.current!)} className="mt-3 rounded-lg bg-navy px-4 py-2 font-semibold text-white">↻ Try again</button>}
                   <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder="Paste the text of the document here…" className="mt-3 h-24 w-full rounded-lg border border-red-200 bg-white p-2 text-ink" />
                   <button disabled={pasteText.trim().length < 20} onClick={processPaste} className="mt-2 rounded-lg bg-navy px-4 py-2 font-semibold text-white disabled:opacity-40">Use this text</button>
                 </div>
@@ -596,9 +685,9 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col">
       {header}
-      <div className="grid min-h-0 flex-1 lg:grid-cols-2">
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-2">
         {/* LEFT: chat */}
-        <section className="no-print flex min-h-0 flex-col border-r border-navy/10">
+        <section className="no-print flex min-h-0 min-w-0 flex-col border-r border-navy/10">
           <div className="border-b border-navy/10 bg-white/70 px-4 py-2">
             <div className="mb-1 flex justify-between text-xs font-bold text-navy">
               <span>{filledCount} / {total} {t(lang, "details")}</span>
@@ -616,13 +705,20 @@ export default function App() {
                 <div className={`max-w-[82%] rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed shadow-sm ${m.from === "babu" ? "rounded-tl-sm bg-white text-ink" : "rounded-tr-sm bg-navy text-white"}`}>
                   {m.text}
                   {m.from === "babu" && (
-                    <button onClick={() => speak(m.speak ?? m.text, m.lang, true)} title={t(lang, "replay")} aria-label={t(lang, "replay")} className="ml-2 align-middle text-base opacity-60 hover:opacity-100">🔊</button>
+                    <button onClick={() => (cancelRec(), speak(m.speak ?? m.text, m.lang, true))} title={t(lang, "replay")} aria-label={t(lang, "replay")} className="ml-2 align-middle text-base opacity-60 hover:opacity-100">🔊</button>
                   )}
                   {m.id === lastBabuId && stage === "confirming" && !busy && !done && (
-                    <div className="mt-2 flex gap-2">
-                      <button onClick={() => pending && (pushUser(t(lang, "yes"), lang), commit(pending))} className="rounded-lg bg-leaf px-3 py-1.5 text-sm font-bold text-white">✅ {t(lang, "yes")}</button>
-                      <button onClick={() => (pushUser(t(lang, "no"), lang), reask())} className="rounded-lg bg-saffron px-3 py-1.5 text-sm font-bold text-white">✏️ {t(lang, "no")}</button>
-                    </div>
+                    <>
+                      {pending && (pending.form || pending.latin) !== (lang === "hi" || lang === "mr" ? pending.value || pending.latin : pending.latin) && (
+                        <div className="mt-2 rounded-lg bg-paper-2 px-2.5 py-1.5 text-sm">
+                          <span className="text-ink/60">📝 {t(lang, "onForm")}:</span> <span className="font-semibold text-navy">{pending.form || pending.latin}</span>
+                        </div>
+                      )}
+                      <div className="mt-2 flex gap-2">
+                        <button onClick={() => pending && (cancelRec(), pushUser(t(lang, "yes"), lang), commit(pending))} className="rounded-lg bg-leaf px-3 py-1.5 text-sm font-bold text-white">✅ {t(lang, "yes")}</button>
+                        <button onClick={() => (cancelRec(), pushUser(t(lang, "no"), lang), reask())} className="rounded-lg bg-saffron px-3 py-1.5 text-sm font-bold text-white">✏️ {t(lang, "no")}</button>
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -649,31 +745,33 @@ export default function App() {
 
           {done ? (
             <div className="border-t border-navy/10 bg-white/80 p-3 lg:hidden">
-              <ActionsBar />
+              {actionsBar()}
               <button onClick={() => setShowForm(true)} className="mt-2 w-full rounded-lg bg-saffron px-4 py-2.5 font-bold text-white lg:hidden">{t(lang, "viewForm")} ({filledCount}/{total})</button>
             </div>
           ) : (
             <div className="border-t border-navy/10 bg-white/80 px-3 pb-3 pt-2">
               <div className="mb-2 flex gap-2 lg:hidden">
                 <button onClick={() => setShowForm(true)} className="flex-1 rounded-lg border border-navy/20 bg-paper py-1.5 text-sm font-semibold text-navy">📋 {t(lang, "viewForm")} ({filledCount}/{total})</button>
-                <button disabled={!!busy || recording} onClick={skipField} className="rounded-lg border border-navy/20 px-3 py-1.5 text-sm font-semibold text-navy sm:hidden">{t(lang, "skip")}</button>
+                <button disabled={!!busy} onClick={() => (cancelRec(), skipField())} className="rounded-lg border border-navy/20 px-3 py-1.5 text-sm font-semibold text-navy sm:hidden">{t(lang, "skip")}</button>
               </div>
               {micDenied && <p className="mb-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">{t(lang, "micDenied")}</p>}
+              {!micDenied && (recording || speaking) && (
+                <p className="mb-2 text-center text-xs font-semibold text-navy" aria-live="polite">
+                  {recording ? <>🔴 {t(lang, "listening")} <span className="font-normal text-ink/60">{t(lang, "autoSend")}</span></> : <>🔊 {t(lang, "speaking")}</>}
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 {!micDenied && (
-                  <div className="flex flex-col items-center">
+                  <div className="flex w-20 shrink-0 flex-col items-center">
                     <button
                       disabled={!!busy}
-                      onPointerDown={(e) => { e.preventDefault(); onMicDown(); }}
-                      onPointerUp={onMicUp}
-                      onPointerLeave={() => recording && !toggleMode.current && Date.now() - holdStart.current >= 350 && void stopRec()}
-                      onContextMenu={(e) => e.preventDefault()}
-                      aria-label={t(lang, "holdToTalk")}
-                      className={`grid h-16 w-16 touch-none select-none place-items-center rounded-full text-3xl text-white shadow-lg transition disabled:opacity-40 ${recording ? "rec-pulse scale-110 bg-red-600" : "bg-navy hover:bg-navy-2"}`}
+                      onClick={onMicTap}
+                      aria-label={recording ? t(lang, "stopTalking") : t(lang, "tapToTalk")}
+                      className={`grid h-16 w-16 select-none place-items-center rounded-full text-3xl text-white shadow-lg transition disabled:opacity-40 ${recording ? "rec-pulse bg-red-600" : "bg-navy hover:bg-navy-2"}`}
                     >
-                      🎙️
+                      {recording ? "⏹️" : "🎙️"}
                     </button>
-                    <span className="mt-1 text-[10px] font-semibold text-ink/60">{recording ? t(lang, "listening") : t(lang, "holdToTalk")}</span>
+                    <span className="mt-1 text-center text-[10px] font-semibold leading-tight text-ink/60">{recording ? t(lang, "stopTalking") : t(lang, "tapToTalk")}</span>
                   </div>
                 )}
                 <form
@@ -682,26 +780,26 @@ export default function App() {
                     e.preventDefault();
                     const v = typed;
                     setTyped("");
+                    typingRef.current = false;
                     void handleInput(v);
                   }}
                 >
-                  <input value={typed} disabled={!!busy || recording} onChange={(e) => setTyped(e.target.value)} placeholder={recording ? t(lang, "listening") : t(lang, "typeHere")} className="min-w-0 flex-1 rounded-xl border border-navy/25 bg-white px-3 py-3 text-[15px] outline-none focus:border-saffron" />
+                  <input ref={inputRef} aria-label={t(lang, "typeHere")} value={typed} disabled={!!busy} onFocus={onTyping} onChange={(e) => (onTyping(), setTyped(e.target.value))} placeholder={t(lang, "typeHere")} className="min-w-0 flex-1 rounded-xl border border-navy/25 bg-white px-3 py-3 text-[15px] outline-none focus:border-saffron" />
                   <button disabled={!typed.trim() || !!busy} className="rounded-xl bg-saffron px-4 font-bold text-white disabled:opacity-40">{t(lang, "send")}</button>
                 </form>
-                <button disabled={!!busy || recording} onClick={skipField} className="hidden rounded-xl border border-navy/25 px-3 py-3 text-sm font-semibold text-navy sm:block">{t(lang, "skip")}</button>
+                <button disabled={!!busy} onClick={() => (cancelRec(), skipField())} className="hidden rounded-xl border border-navy/25 px-3 py-3 text-sm font-semibold text-navy sm:block">{t(lang, "skip")}</button>
               </div>
             </div>
           )}
         </section>
 
         {/* RIGHT: live form */}
-        <section className={`${showForm ? "fixed inset-0 z-50 flex" : "hidden"} print-force min-h-0 flex-col overflow-y-auto bg-paper-2 p-3 sm:p-6 lg:static lg:z-auto lg:flex`}>
+        <section className={`${showForm ? "fixed inset-0 z-50 flex" : "hidden"} print-force min-h-0 min-w-0 flex-col overflow-y-auto bg-paper-2 p-3 sm:p-6 lg:static lg:z-auto lg:flex`}>
           <div className="no-print mb-3 flex items-center justify-between lg:hidden">
             <button onClick={() => setShowForm(false)} className="rounded-lg bg-navy px-4 py-2 text-sm font-bold text-white">← {t(lang, "close")}</button>
             <span className="text-sm font-bold text-navy">{filledCount} / {total}</span>
           </div>
-          {done && <ActionsBar className="mb-4 hidden lg:flex" />}
-          {done && <ActionsBar className="mb-4 lg:hidden" />}
+          {done && actionsBar("mb-4")}
           {schema && <FormSheet schema={schema} values={values} highlight={highlight} done={done} lang={lang} letter={letter} onEdit={editField} />}
         </section>
       </div>

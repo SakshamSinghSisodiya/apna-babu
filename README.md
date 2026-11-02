@@ -15,8 +15,10 @@ Bank forms, scholarship applications, electricity connections and court notices 
 1. **Upload** a photo or PDF of a form or official document, or pick a built-in sample.
 2. **Read:** Sarvam Vision reads the page and the chat model works out which details are needed. If it's a bill, notice or summons rather than a form, Babu explains it and proposes the right reply (complaint, reply letter, RTI application).
 3. **Choose a language:** English, हिंदी, मराठी or Hinglish.
-4. **Talk:** Babu asks for one detail at a time, out loud. Answer by voice or by typing. Spoken numbers and dates are normalised, every value is validated and read back for confirmation, and the form on screen fills in live.
+4. **Talk:** Babu asks for one detail at a time, out loud, then the mic opens by itself. Your answer goes in when you tap Done or pause for 3 seconds, or you can type instead. Spoken numbers and dates are normalised, every value is validated and read back for confirmation, and the form on screen fills in live, in the form's own language whichever language you spoke.
 5. **Done:** a print-ready form with a "FILLED ✓" stamp, a spoken summary of what's missing and what to carry, and print, download and share buttons.
+
+Long forms are condensed to the 25 details that matter most, so check the printed copy against the original.
 
 ## Supported languages
 
@@ -54,7 +56,11 @@ The server stores nothing. Conversation state stays in the browser and is sent w
 
 ## Screenshots
 
-_Coming soon_
+Made-up demo data.
+
+| Filling a form in Hindi | Finished form |
+| --- | --- |
+| ![Chat on the left, form filling in live on the right](docs/filling.jpg) | ![Completed form with the stamp and print buttons](docs/done.jpg) |
 
 ## Local setup
 
