@@ -1,0 +1,148 @@
+import type { LangId } from "./languages";
+
+type Dict = Record<string, string>;
+
+// Fixed UI chrome. Dynamic content goes through Sarvam Translate.
+export const UI: Record<LangId, Dict> = {
+  en: {
+    listening: "Apna Babu is listening…",
+    thinking: "Apna Babu is thinking…",
+    holdToTalk: "Hold to talk",
+    tapToTalk: "Tap to talk",
+    typeHere: "Or type your answer here",
+    send: "Send",
+    viewForm: "View form",
+    details: "details",
+    skip: "Skip",
+    yes: "Yes, correct",
+    no: "No, change it",
+    switchTo: "Looks like you are speaking {lang}. Switch?",
+    switchBtn: "Switch",
+    filled: "FILLED ✓",
+    print: "Print / Save as PDF",
+    download: "Download as text",
+    share: "Share",
+    startOver: "Start over",
+    disclaimer: "Draft prepared for assistance — please review before submitting. Not legal advice.",
+    missing: "Not filled",
+    close: "Close",
+    replay: "Play again",
+    preparing: "Babu is getting your questions ready…",
+    done: "All done",
+    micDenied: "Microphone is blocked. You can type your answers instead.",
+    typeMode: "Type instead",
+  },
+  hi: {
+    listening: "अपना बाबू सुन रहा है…",
+    thinking: "अपना बाबू सोच रहा है…",
+    holdToTalk: "बोलने के लिए दबाए रखें",
+    tapToTalk: "बोलने के लिए टैप करें",
+    typeHere: "या यहाँ टाइप करें",
+    send: "भेजें",
+    viewForm: "फ़ॉर्म देखें",
+    details: "जानकारी",
+    skip: "छोड़ें",
+    yes: "हाँ, सही है",
+    no: "नहीं, बदलें",
+    switchTo: "लगता है आप {lang} बोल रहे हैं। भाषा बदलें?",
+    switchBtn: "बदलें",
+    filled: "भर गया ✓",
+    print: "प्रिंट / PDF सहेजें",
+    download: "टेक्स्ट डाउनलोड करें",
+    share: "शेयर करें",
+    startOver: "फिर से शुरू करें",
+    disclaimer: "यह सहायता के लिए तैयार किया गया मसौदा है — जमा करने से पहले जाँच लें। यह कानूनी सलाह नहीं है।",
+    missing: "भरा नहीं गया",
+    close: "बंद करें",
+    replay: "फिर से सुनें",
+    preparing: "बाबू आपके सवाल तैयार कर रहा है…",
+    done: "पूरा हुआ",
+    micDenied: "माइक्रोफ़ोन बंद है। आप टाइप करके जवाब दे सकते हैं।",
+    typeMode: "टाइप करें",
+  },
+  mr: {
+    listening: "अपना बाबू ऐकत आहे…",
+    thinking: "अपना बाबू विचार करत आहे…",
+    holdToTalk: "बोलण्यासाठी दाबून ठेवा",
+    tapToTalk: "बोलण्यासाठी टॅप करा",
+    typeHere: "किंवा इथे टाइप करा",
+    send: "पाठवा",
+    viewForm: "फॉर्म पहा",
+    details: "माहिती",
+    skip: "वगळा",
+    yes: "होय, बरोबर",
+    no: "नाही, बदला",
+    switchTo: "तुम्ही {lang} बोलत आहात असे दिसते. भाषा बदलायची?",
+    switchBtn: "बदला",
+    filled: "भरले ✓",
+    print: "प्रिंट / PDF जतन करा",
+    download: "टेक्स्ट डाउनलोड करा",
+    share: "शेअर करा",
+    startOver: "पुन्हा सुरू करा",
+    disclaimer: "हा मदतीसाठी तयार केलेला मसुदा आहे — सादर करण्यापूर्वी तपासा. हा कायदेशीर सल्ला नाही.",
+    missing: "भरलेले नाही",
+    close: "बंद करा",
+    replay: "पुन्हा ऐका",
+    preparing: "बाबू तुमचे प्रश्न तयार करत आहे…",
+    done: "पूर्ण झाले",
+    micDenied: "मायक्रोफोन बंद आहे. तुम्ही टाइप करून उत्तर देऊ शकता.",
+    typeMode: "टाइप करा",
+  },
+  hinglish: {
+    listening: "Apna Babu sun raha hai…",
+    thinking: "Apna Babu soch raha hai…",
+    holdToTalk: "Bolne ke liye dabaye rakhein",
+    tapToTalk: "Bolne ke liye tap karein",
+    typeHere: "Ya yahan type karein",
+    send: "Bhejein",
+    viewForm: "Form dekhein",
+    details: "details",
+    skip: "Skip",
+    yes: "Haan, sahi hai",
+    no: "Nahi, badlein",
+    switchTo: "Lagta hai aap {lang} bol rahe hain. Language badlein?",
+    switchBtn: "Badlein",
+    filled: "FILLED ✓",
+    print: "Print / PDF save karein",
+    download: "Text download karein",
+    share: "Share karein",
+    startOver: "Phir se shuru karein",
+    disclaimer: "Yeh madad ke liye banaya gaya draft hai — submit karne se pehle check kar lein. Yeh legal advice nahi hai.",
+    missing: "Bhara nahi gaya",
+    close: "Band karein",
+    replay: "Dobara sunein",
+    preparing: "Babu aapke sawal taiyaar kar raha hai…",
+    done: "Ho gaya",
+    micDenied: "Microphone band hai. Aap type karke jawab de sakte hain.",
+    typeMode: "Type karein",
+  },
+};
+
+export const t = (lang: LangId, key: string, vars?: Record<string, string>): string => {
+  let s = UI[lang][key] ?? UI.en[key] ?? key;
+  if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, v);
+  return s;
+};
+
+// Spoken scripts for fixed lines.
+export const GREETING: Record<LangId, string> = {
+  en: "Namaste! I am Apna Babu. Which language are you comfortable in?",
+  hi: "नमस्ते! मैं अपना बाबू हूँ। आप किस भाषा में बात करना चाहेंगे?",
+  mr: "नमस्कार! मी अपना बाबू आहे. तुम्हाला कोणत्या भाषेत बोलायला सोयीचे वाटते?",
+  hinglish: "Namaste! Main Apna Babu hoon. Aap kis language mein baat karna chahenge?",
+};
+
+// No "आपका/तुमचं" before {label}: the possessive must agree with the label's gender, which we don't know.
+export const CONFIRM_TMPL: Record<LangId, string> = {
+  en: "{label}: {value}. Is that correct?",
+  hi: "{label}: {value}, सही है?",
+  mr: "{label}: {value}, बरोबर ना?",
+  hinglish: "{label}: {value}, sahi hai?",
+};
+
+export const MISC: Record<LangId, { unclear: string; error: string; skipped: string; okNext: string; again: string }> = {
+  en: { unclear: "Sorry, I could not hear that clearly. Please say it again.", error: "Babu's computer is a little slow. Please try once more.", skipped: "No problem, we will leave that blank.", okNext: "Got it.", again: "Okay, let's do that again." },
+  hi: { unclear: "माफ़ कीजिए, मैं साफ़ नहीं सुन पाया। कृपया दोबारा बोलिए।", error: "बाबू का कंप्यूटर थोड़ा धीमा है। एक बार फिर बोलिए।", skipped: "कोई बात नहीं, इसे खाली छोड़ देते हैं।", okNext: "ठीक है।", again: "ठीक है, फिर से बताइए।" },
+  mr: { unclear: "माफ करा, मला नीट ऐकू आले नाही. कृपया पुन्हा सांगा.", error: "बाबूचा संगणक थोडा हळू आहे. कृपया पुन्हा एकदा सांगा.", skipped: "काही हरकत नाही, हे रिकामे ठेवूया.", okNext: "ठीक आहे.", again: "ठीक आहे, पुन्हा सांगा." },
+  hinglish: { unclear: "Sorry, mujhe saaf sunai nahi diya. Please dobara boliye.", error: "Babu ka computer thoda slow hai, ek baar phir boliye.", skipped: "Koi baat nahi, isse khaali chhod dete hain.", okNext: "Theek hai.", again: "Theek hai, phir se bataiye." },
+};
