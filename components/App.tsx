@@ -72,7 +72,6 @@ export default function App() {
   const speakSeq = useRef(0);
   const session = useRef(0); // bumped by "start over" so late replies from the old form are ignored
   const lastFile = useRef<File | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const getPlayer = () => (player.current ??= new Player());
 
@@ -89,11 +88,6 @@ export default function App() {
   useEffect(() => {
     document.documentElement.lang = LANGUAGES[lang].code;
   }, [lang]);
-
-  // The input is disabled while Babu thinks, which drops focus: hand it back to someone who is typing.
-  useEffect(() => {
-    if (!busy && phase === "chat" && typingRef.current) inputRef.current?.focus();
-  }, [busy, phase]);
 
   // ---------- speech ----------
   const speak = useCallback(async (text: string, lng: LangId, force = false) => {
@@ -784,7 +778,7 @@ export default function App() {
                     void handleInput(v);
                   }}
                 >
-                  <input ref={inputRef} aria-label={t(lang, "typeHere")} value={typed} disabled={!!busy} onFocus={onTyping} onChange={(e) => (onTyping(), setTyped(e.target.value))} placeholder={t(lang, "typeHere")} className="min-w-0 flex-1 rounded-xl border border-navy/25 bg-white px-3 py-3 text-[15px] outline-none focus:border-saffron" />
+                  <input aria-label={t(lang, "typeHere")} value={typed} disabled={!!busy} onFocus={onTyping} onChange={(e) => (onTyping(), setTyped(e.target.value))} placeholder={t(lang, "typeHere")} className="min-w-0 flex-1 rounded-xl border border-navy/25 bg-white px-3 py-3 text-[15px] outline-none focus:border-saffron" />
                   <button disabled={!typed.trim() || !!busy} className="rounded-xl bg-saffron px-4 font-bold text-white disabled:opacity-40">{t(lang, "send")}</button>
                 </form>
                 <button disabled={!!busy} onClick={() => (cancelRec(), skipField())} className="hidden rounded-xl border border-navy/25 px-3 py-3 text-sm font-semibold text-navy sm:block">{t(lang, "skip")}</button>
