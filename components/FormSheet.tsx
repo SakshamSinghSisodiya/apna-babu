@@ -3,6 +3,13 @@ import type { FieldValue, FormSchema } from "@/lib/types";
 import type { LangId } from "@/lib/languages";
 import { t } from "@/lib/i18n";
 
+// Printed on the form itself, so it follows the form's language rather than the user's.
+const PRINTED: Record<string, { form: string; draft: string; attach: string; date: string; sign: string }> = {
+  en: { form: "Application / Form", draft: "Draft letter / application", attach: "Documents to attach", date: "Date", sign: "Signature / Thumb impression" },
+  hi: { form: "आवेदन / फ़ॉर्म", draft: "पत्र / आवेदन का मसौदा", attach: "संलग्न किए जाने वाले दस्तावेज़", date: "दिनांक", sign: "हस्ताक्षर / अँगूठे का निशान" },
+  mr: { form: "अर्ज / फॉर्म", draft: "पत्र / अर्जाचा मसुदा", attach: "जोडायची कागदपत्रे", date: "दिनांक", sign: "सही / अंगठ्याचा ठसा" },
+};
+
 interface Props {
   schema: FormSchema;
   values: Record<string, FieldValue>;
@@ -20,7 +27,7 @@ export default function FormSheet({ schema, values, highlight, done, lang, lette
     if (!s) sections.push((s = { name: f.section, items: [] }));
     s.items.push({ idx, id: f.id, label: f.label_form || f.label_en });
   });
-  const today = new Date().toLocaleDateString("en-GB");
+  const printed = PRINTED[schema.form_language ?? "en"] ?? PRINTED.en;
 
   return (
     <div id="print-root" className="relative mx-auto w-full max-w-[760px] rounded-sm border border-navy/20 bg-white p-5 shadow-lg sm:p-8">
@@ -30,7 +37,7 @@ export default function FormSheet({ schema, values, highlight, done, lang, lette
         </div>
       )}
       <div className="mt-5 border-b-2 border-navy pb-3 text-center">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-saffron-2">{schema.is_form ? "Application / Form" : "Draft letter / application"}</div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-saffron-2">{schema.is_form ? printed.form : printed.draft}</div>
         <h2 className="mt-1 text-xl font-bold text-navy sm:text-2xl">{schema.title_form || schema.title}</h2>
       </div>
 
@@ -45,11 +52,14 @@ export default function FormSheet({ schema, values, highlight, done, lang, lette
                 <div
                   key={it.id}
                   onClick={() => onEdit?.(it.idx)}
-                  className={`no-print-hover rounded px-1.5 py-1 ${onEdit ? "cursor-pointer hover:bg-saffron/10" : ""} ${highlight === it.id ? "fill-flash" : ""} ${it.label.length > 38 || (filled && v.latin.length > 36) ? "sm:col-span-2" : ""}`}
+                  onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onEdit?.(it.idx))}
+                  role={onEdit ? "button" : undefined}
+                  tabIndex={onEdit ? 0 : undefined}
+                  className={`rounded px-1.5 py-1 ${onEdit ? "cursor-pointer hover:bg-saffron/10" : ""} ${highlight === it.id ? "fill-flash" : ""} ${it.label.length > 38 || (filled && v.latin.length > 36) ? "sm:col-span-2" : ""}`}
                 >
                   <dt className="text-[11px] font-medium text-ink/60">{it.label}</dt>
                   <dd className={`min-h-[1.6rem] border-b border-ink/40 pb-0.5 text-[15px] font-semibold ${filled ? "text-navy" : "text-ink/30"}`}>
-                    {filled ? v.form || v.latin : v?.skipped ? <span className="text-xs font-normal italic">— {t(lang, "missing")} —</span> : ""}
+                    {filled ? v.form || v.latin : v?.skipped ? <span className="text-xs font-normal italic print:hidden">— {t(lang, "missing")} —</span> : ""}
                   </dd>
                 </div>
               );
@@ -64,7 +74,7 @@ export default function FormSheet({ schema, values, highlight, done, lang, lette
 
       {schema.required_attachments.length > 0 && (
         <section className="mt-5 break-inside-avoid">
-          <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-navy">Documents to attach</h3>
+          <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-navy">{printed.attach}</h3>
           <ul className="list-inside list-disc text-sm text-ink/80">
             {schema.required_attachments.map((a) => (
               <li key={a}>{a}</li>
@@ -76,11 +86,11 @@ export default function FormSheet({ schema, values, highlight, done, lang, lette
       <div className="mt-8 grid grid-cols-2 gap-8 text-sm">
         <div>
           <div className="border-b border-ink/50 pt-6" />
-          <div className="mt-1 text-xs text-ink/60">Date: {today}</div>
+          <div className="mt-1 text-xs text-ink/60">{printed.date}</div>
         </div>
         <div>
           <div className="border-b border-ink/50 pt-6" />
-          <div className="mt-1 text-xs text-ink/60">Signature / Thumb impression</div>
+          <div className="mt-1 text-xs text-ink/60">{printed.sign}</div>
         </div>
       </div>
       <p className="mt-6 text-center text-[10px] text-ink/50">{t(lang, "disclaimer")}</p>

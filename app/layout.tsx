@@ -8,6 +8,14 @@ const deva = Noto_Sans_Devanagari({ subsets: ["devanagari"], variable: "--font-d
 export const metadata: Metadata = {
   title: "Apna Babu — the government clerk who works for you",
   description: "A voice-first assistant that fills any paper form in English, Hindi, Marathi or Hinglish. Powered by Sarvam AI.",
+  metadataBase: new URL("https://apna-babu.vercel.app"),
+  openGraph: {
+    title: "Apna Babu",
+    description: "Every Indian has paid a tout to fill a form. Apna Babu does it free, in your language.",
+    url: "/",
+    siteName: "Apna Babu",
+    type: "website",
+  },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#1e3a8a" };

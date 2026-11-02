@@ -8,6 +8,6 @@ export async function localize(text: string, lang: LangId): Promise<Localized> {
   const translated = await translateText(text, cfg.translateTarget, cfg.translateMode);
   if (lang !== "hinglish") return { text: translated, speak: translated };
   // Hinglish: code-mixed Devanagari for the voice, Roman script for display.
-  const roman = await transliterateText(translated, "hi-IN", "en-IN").catch(() => translated);
+  const roman = await translateText(text, cfg.translateTarget, cfg.translateMode, "en-IN", "roman").catch(() => transliterateText(translated, "hi-IN", "en-IN"));
   return { text: roman, speak: translated };
 }

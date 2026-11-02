@@ -138,10 +138,10 @@ export async function chatJSON<T = any>(system: string, user: string, maxTokens 
 }
 
 // ---- Translate / Transliterate -------------------------------------------
-export async function translateText(input: string, target: string, mode: string, source = "en-IN"): Promise<string> {
+export async function translateText(input: string, target: string, mode: string, source = "en-IN", outputScript?: "roman"): Promise<string> {
   if (!input.trim() || target === source) return input;
   const data = await sarvamJSON("/translate", {
-    json: { input: input.slice(0, 990), source_language_code: source, target_language_code: target, model: "mayura:v1", mode, speaker_gender: "Male" },
+    json: { input: input.slice(0, 990), source_language_code: source, target_language_code: target, model: "mayura:v1", mode, speaker_gender: "Male", ...(outputScript ? { output_script: outputScript } : {}) },
   });
   return data.translated_text ?? input;
 }
