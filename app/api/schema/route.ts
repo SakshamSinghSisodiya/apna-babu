@@ -4,7 +4,7 @@ import type { FormSchema } from "@/lib/types";
 
 export const maxDuration = 60;
 
-const SYSTEM = `You are Apna Babu, an expert at Indian government and bank paperwork. You receive the text (markdown) of a scanned document. Output ONLY a single-line minified JSON object, no prose, no line breaks or indentation. Keep "fields" as the LAST key. Leave out optional keys that do not apply (options, hint_en, prefilled_value, label_form, title_form):
+const SYSTEM = `You are Apna Babu, an expert at Indian government and bank paperwork. You receive the text (markdown) of a scanned document. Output ONLY a single-line minified JSON object, no prose, no line breaks or indentation. Leave out optional keys that do not apply (options, hint_en, prefilled_value, label_form, title_form):
 {
  "doc_type": "short_snake_case",
  "is_form": true|false,
@@ -25,7 +25,8 @@ export const POST = handle(async (req) => {
   const { markdown } = await req.json();
   const text = String(markdown ?? "").slice(0, 12000);
   if (text.trim().length < 20) throw new Error("empty document");
-  const s = await chatJSON<FormSchema>(SYSTEM, "DOCUMENT:\n" + text, 6000, 28000);
+  let s = await chatJSON<FormSchema>(SYSTEM, "DOCUMENT:\n" + text, 6000, 28000);
+  if (!s.fields?.length) s = await chatJSON<FormSchema>(SYSTEM, "DOCUMENT:\n" + text, 6000, 28000);
   if (!Array.isArray(s.fields) || s.fields.length === 0) throw new Error("no fields");
   const seen = new Set<string>();
   s.fields = s.fields.slice(0, 25).map((f, i) => {
